@@ -1,0 +1,36 @@
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+*.pyc.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging outputs
+build/
+dist/
+*.egg-info/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Project runtime outputs
+data/
+logs/
+runs/
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+
