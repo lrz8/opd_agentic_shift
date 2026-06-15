@@ -4,6 +4,7 @@ import argparse
 import random
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -43,8 +44,8 @@ def train_online_opd(
             if done:
                 break
 
-        bx = torch.tensor(xs, dtype=torch.float32)
-        bt = torch.tensor(ts, dtype=torch.float32)
+        bx = torch.tensor(np.asarray(xs), dtype=torch.float32)
+        bt = torch.tensor(np.asarray(ts), dtype=torch.float32)
         logits = policy(bx)
         loss = -(bt * F.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
         opt.zero_grad()

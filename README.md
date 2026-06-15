@@ -22,7 +22,15 @@ A troubleshooting agent must diagnose one hidden fault by calling tools and then
 
 ```bash
 pip install -r requirements.txt
-python run_all.py
+python run_all.py --profile quick
+```
+
+This runs the full toy pipeline on CPU with reduced episode counts, writes
+metrics to `runs/eval/summary.json`, and generates `REPORT.md` for handoff.
+For a larger rerun that matches the original demo scale:
+
+```bash
+python run_all.py --profile full
 ```
 
 ## Manual pipeline
