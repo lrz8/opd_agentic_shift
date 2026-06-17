@@ -1,0 +1,11 @@
+setting,method,success_rate,avg_reward,avg_length,off_support_vs_expert,off_support_vs_offline_opd
+in_distribution,sft,1.000,0.861,2.785,0.000,0.000
+in_distribution,online_rl,0.755,0.410,2.000,0.000,0.000
+in_distribution,offline_opd,1.000,0.861,2.785,0.000,0.000
+in_distribution,offline_opd_support,1.000,0.861,2.785,0.000,0.000
+in_distribution,online_opd,1.000,0.861,2.785,0.000,0.000
+agentic_shift,sft,0.790,0.188,2.850,1.000,0.919
+agentic_shift,online_rl,0.580,-0.183,1.865,1.000,0.949
+agentic_shift,offline_opd,0.870,0.357,3.055,1.000,0.925
+agentic_shift,offline_opd_support,0.870,0.357,3.055,1.000,0.925
+agentic_shift,online_opd,0.730,0.177,3.350,1.000,0.931

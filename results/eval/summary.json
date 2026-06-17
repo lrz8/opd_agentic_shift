@@ -1,0 +1,52 @@
+{
+  "sft": {
+    "policy_path": "runs/ckpts/sft.pt",
+    "num_episodes": 200,
+    "success_rate": 1.0,
+    "avg_reward": 0.8607499999999999,
+    "avg_length": 2.785,
+    "off_support_vs_expert": 0.0,
+    "off_support_vs_offline_opd": 0.0,
+    "initial_wrong_repair_prob": 0.0
+  },
+  "online_rl": {
+    "policy_path": "runs/ckpts/online_rl.pt",
+    "num_episodes": 200,
+    "success_rate": 0.755,
+    "avg_reward": 0.41,
+    "avg_length": 2.0,
+    "off_support_vs_expert": 0.0,
+    "off_support_vs_offline_opd": 0.0,
+    "initial_wrong_repair_prob": 0.0
+  },
+  "offline_opd": {
+    "policy_path": "runs/ckpts/offline_opd.pt",
+    "num_episodes": 200,
+    "success_rate": 1.0,
+    "avg_reward": 0.8607499999999999,
+    "avg_length": 2.785,
+    "off_support_vs_expert": 0.0,
+    "off_support_vs_offline_opd": 0.0,
+    "initial_wrong_repair_prob": 0.0
+  },
+  "offline_opd_support": {
+    "policy_path": "runs/ckpts/offline_opd_support.pt",
+    "num_episodes": 200,
+    "success_rate": 1.0,
+    "avg_reward": 0.8607499999999999,
+    "avg_length": 2.785,
+    "off_support_vs_expert": 0.0,
+    "off_support_vs_offline_opd": 0.0,
+    "initial_wrong_repair_prob": 0.0
+  },
+  "online_opd": {
+    "policy_path": "runs/ckpts/online_opd.pt",
+    "num_episodes": 200,
+    "success_rate": 1.0,
+    "avg_reward": 0.8607499999999999,
+    "avg_length": 2.785,
+    "off_support_vs_expert": 0.0,
+    "off_support_vs_offline_opd": 0.0,
+    "initial_wrong_repair_prob": 0.0
+  }
+}

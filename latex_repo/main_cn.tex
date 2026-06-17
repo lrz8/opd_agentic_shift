@@ -1,0 +1,546 @@
+\documentclass[11pt]{ctexart}
+
+% 中文版报告：使用 ctexart 编译，建议 XeLaTeX。
+\input{setup.tex}
+
+\title{\textbf{Offline OPD under Agentic Shift}\\
+\large 离线 OPD 在多轮智能体分布偏移下的假设边界实验}
+\author{Runze Lv\\\texttt{runzelvlc@gmail.com}}
+\date{2026 年 6 月}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本文选择在线考核题目二：\textbf{Offline OPD under Agentic Shift}。
+围绕 Lightning OPD 的离线化假设，本文构造了一个 CPU-only 的多轮故障排查 toy task。
+在该任务中，智能体需要通过工具式动作逐步诊断隐藏故障，并提交最终根因；错误的早期修复动作会污染日志或误配置系统组件，从而改变后续状态分布。
+本文实现并比较了 \sft{}、\onlinerl{}、\offlineopd{}、\onlineopd{}，并额外实现了一个 support-aware \offlineopd{} patch。
+实验结果显示：在正常分布下，\sft{} 与 \offlineopd{} 都能达到很高成功率；但在注入早期错误动作的 agentic-shift 压力测试中，off-support state ratio 明显上升，成功率下降，从而暴露了离线 OPD 对状态覆盖的依赖。
+\end{abstract}
+
+\section{题目选择与问题理解}
+
+本文选择的题目是第二题：\textbf{Offline OPD under Agentic Shift｜离线 OPD 的假设边界}。
+题目要求阅读 Lightning OPD 及对比论文，理解 \sft{}、\onlinerl{}、\onlineopd{}、\offlineopd{} 的区别，并设计一个轻量级多轮 agentic toy task。
+该任务需要满足以下条件：
+
+\begin{itemize}
+    \item 多轮决策；
+    \item 有工具式动作；
+    \item 有错误分支；
+    \item 有最终答案奖励；
+    \item 早期错误会影响后续状态。
+\end{itemize}
+
+本文代码实现位于项目根目录的 \code{opd_agentic_shift/} 下。
+中文报告源码位于 \code{latex_repo/} 下，提交用的汇总结果位于项目根目录的 \code{results/} 下。
+
+\section{论文背景与方法差异}
+
+\subsection{Lightning OPD 的核心假设}
+
+Lightning OPD 的目标是减少在线 teacher query 的成本。
+它希望利用已经由初始策略生成的 rollout 数据，在这些状态上预先计算 teacher 的动作分布或 log-probability，然后离线训练学生策略。
+如果 teacher consistency 假设成立，即同一状态上的 teacher label 可以被稳定复用，那么 \offlineopd{} 就可以避免训练时反复调用 teacher。
+
+但是这个假设在多轮 agentic 任务中会受到挑战。
+原因是策略的一个早期动作可能改变环境状态，导致后续状态不再落在原来的离线数据支持集内。
+此时，离线缓存的 teacher label 只能覆盖旧分布，无法回答新分支上的 teacher 应该怎么做。
+
+\subsection{与对比论文的区别}
+
+对比论文 \emph{Revealing the Power of Post-Training for Small Language Models via Knowledge Distillation} 也使用了 SFT 与离线蒸馏思想。
+它更偏向小模型 post-training 的实用流程：先进行 curriculum SFT，再通过 teacher-student knowledge distillation 提升模型能力。
+Lightning OPD 更强调从 on-policy distillation 的角度分析 teacher consistency 与离线化假设。
+
+简言之：
+
+\begin{itemize}
+    \item 对比论文更关注小模型蒸馏训练 recipe；
+    \item Lightning OPD 更关注如何把 OPD 从在线 teacher query 转为离线训练；
+    \item 本文实验则进一步考察：当任务变成多轮工具调用，并且早期动作会改变后续状态时，离线 OPD 的假设边界在哪里。
+\end{itemize}
+
+\section{Toy Task：多轮故障排查智能体}
+
+\subsection{任务定义}
+
+本文设计了一个符号化的多轮故障排查环境。
+每个 episode 开始时，环境从 5 类隐藏故障中采样一个真实根因：
+
+\begin{table}[H]
+\centering
+\caption{隐藏故障类型}
+\begin{tabular}{ll}
+\toprule
+编号 & 隐藏故障 \\
+\midrule
+1 & \code{network_dns_error} \\
+2 & \code{disk_full} \\
+3 & \code{database_connection_error} \\
+4 & \code{permission_denied} \\
+5 & \code{service_crash} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+智能体不能直接观察真实故障，只能观察工具调用返回的状态，例如日志状态、网络状态、磁盘状态、数据库状态和权限状态。
+智能体最终需要选择一个 \code{submit_*} 动作提交根因。
+
+\subsection{动作空间}
+
+动作空间分为三类：诊断工具、修复动作和最终答案。
+
+\begin{table}[H]
+\centering
+\caption{故障排查环境的动作空间}
+\begin{tabular}{L{0.25\linewidth} L{0.65\linewidth}}
+\toprule
+类别 & 动作 \\
+\midrule
+诊断工具
+&
+\code{check_service_log},
+\code{check_network},
+\code{check_disk},
+\code{check_db},
+\code{check_permission}
+\\
+修复动作
+&
+\code{restart_service},
+\code{clean_disk},
+\code{fix_dns},
+\code{fix_db_config},
+\code{fix_permission}
+\\
+最终答案
+&
+\code{submit_network_dns_error},
+\code{submit_disk_full},
+\code{submit_database_connection_error},
+\code{submit_permission_denied},
+\code{submit_service_crash}
+\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{早期错误造成的状态偏移}
+
+为了模拟 agentic shift，错误的修复动作会产生持久副作用：
+
+\begin{itemize}
+    \item 过早执行 \code{restart_service} 会污染日志；
+    \item 非 DNS 故障时执行 \code{fix_dns} 会造成网络误配置；
+    \item 非数据库故障时执行 \code{fix_db_config} 会造成数据库误配置；
+    \item 非权限故障时执行 \code{fix_permission} 会造成权限相关误配置；
+    \item 某些错误清理动作会让后续日志变得不可靠。
+\end{itemize}
+
+因此，智能体的后续观测不仅取决于隐藏故障，也取决于此前动作。
+这使得任务具备多轮 agentic 系统中常见的错误累积问题。
+
+\subsection{奖励函数}
+
+奖励函数以最终诊断为主：
+
+\begin{equation}
+r_t =
+\begin{cases}
++1.0, & \text{提交正确根因}, \\
+-1.0, & \text{提交错误根因}, \\
+-0.05, & \text{诊断工具调用}, \\
+-0.20, & \text{错误修复动作}, \\
+-0.50, & \text{超时未完成}.
+\end{cases}
+\end{equation}
+
+最大轨迹长度设为 $T=6$。
+
+\section{代码框架}
+
+项目主体结构如下：
+
+\begin{lstlisting}
+Offline_OPD/
+├── run_all.py
+├── README.md
+├── REPORT.md
+├── results/
+│   ├── eval/
+│   ├── eval_shift/
+│   └── tables/
+├── opd_agentic_shift/
+│   ├── envs/
+│   │   ├── troubleshooting_env.py
+│   │   └── encoder.py
+│   ├── teachers/
+│   │   └── rule_teacher.py
+│   ├── policies/
+│   │   └── mlp_policy.py
+│   ├── data/
+│   │   ├── generate_expert_data.py
+│   │   ├── collect_rollouts.py
+│   │   └── build_offline_opd_data.py
+│   ├── algos/
+│   │   ├── sft.py
+│   │   ├── offline_opd.py
+│   │   ├── online_rl.py
+│   │   └── online_opd.py
+│   ├── eval/
+│   │   ├── evaluate.py
+│   │   └── case_analysis.py
+│   └── utils/
+│       └── io.py
+└── latex_repo/
+    ├── main_cn.tex
+    ├── setup.tex
+    └── results/
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\caption{主要代码模块}
+\begin{tabular}{L{0.32\linewidth} L{0.20\linewidth} L{0.38\linewidth}}
+\toprule
+文件 & 角色 & 说明 \\
+\midrule
+\code{troubleshooting_env.py} & 环境 & 多轮故障排查环境，包含错误分支和副作用 \\
+\code{encoder.py} & 状态编码 & 将符号观测转为 MLP 输入向量 \\
+\code{rule_teacher.py} & Teacher & 可读取隐藏故障的规则 oracle \\
+\code{mlp_policy.py} & Policy & 小型 MLP 学生策略 \\
+\code{generate_expert_data.py} & 数据生成 & 用 teacher 生成专家轨迹 \\
+\code{collect_rollouts.py} & Rollout 收集 & 用 SFT policy 收集 student states \\
+\code{build_offline_opd_data.py} & 离线标注 & 在 student states 上预计算 teacher distribution \\
+\code{sft.py} & 训练 & 行为克隆 baseline \\
+\code{online_rl.py} & 训练 & REINFORCE baseline \\
+\code{offline_opd.py} & 训练 & 普通离线 OPD 与 support-aware patch \\
+\code{online_opd.py} & 训练 & 在线 teacher query 的上界方法 \\
+\code{evaluate.py} & 评估 & success、reward、length、off-support ratio \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{方法实现}
+
+\subsection{SFT}
+
+\sft{} 使用 rule teacher 生成的专家轨迹训练学生策略：
+
+\begin{equation}
+\mathcal{L}_{\text{SFT}}(\theta)
+=
+-\mathbb{E}_{(s,a^*) \sim \mathcal{D}_{\text{expert}}}
+\log \pi_\theta(a^* \mid s).
+\end{equation}
+
+该方法稳定，但只见过专家访问的状态。
+一旦学生策略在测试时进入错误分支，就可能遇到 expert data 不覆盖的状态。
+
+\subsection{Online RL}
+
+\onlinerl{} 使用 REINFORCE 直接优化环境 reward：
+
+\begin{equation}
+\mathcal{L}_{\text{RL}}(\theta)
+=
+-\mathbb{E}_{\tau \sim \pi_\theta}
+\sum_t \log \pi_\theta(a_t \mid s_t) R_t.
+\end{equation}
+
+它可以访问自身策略诱导出的状态，但在稀疏奖励下训练更不稳定。
+
+\subsection{Offline OPD}
+
+\offlineopd{} 首先用 SFT policy 收集 rollout，然后在这些状态上预先计算 teacher 分布：
+
+\begin{equation}
+\mathcal{D}_{\text{OPD}}
+=
+\{(s_t, q_T(\cdot \mid s_t))\}_{t=1}^{N}.
+\end{equation}
+
+学生策略通过匹配 teacher 分布训练：
+
+\begin{equation}
+\mathcal{L}_{\text{Offline OPD}}(\theta)
+=
+\mathbb{E}_{s \sim \mathcal{D}_{\text{OPD}}}
+\left[
+\mathrm{KL}
+\left(
+q_T(\cdot \mid s)
+\parallel
+\pi_\theta(\cdot \mid s)
+\right)
+\right].
+\end{equation}
+
+该方法比专家轨迹 SFT 更接近学生策略分布，但仍受限于固定 offline rollout 的覆盖范围。
+
+\subsection{Online OPD}
+
+\onlineopd{} 在训练时让当前学生策略 rollout，并实时查询 teacher：
+
+\begin{equation}
+s_t \sim \pi_\theta,
+\quad
+q_T(\cdot \mid s_t) = \mathrm{Teacher}(s_t).
+\end{equation}
+
+它可以作为一个上界，因为 teacher label 始终来自当前学生分布。
+但实际大模型场景中，在线 teacher query 成本较高。
+
+\section{提出的 Patch：Support-aware Offline OPD}
+
+本文针对 offline state coverage 不足提出一个轻量 patch：\supportopd{}。
+其核心思想是根据状态在离线 OPD 数据集中出现的频率，为每个样本赋权：
+
+\begin{equation}
+w(s)
+=
+\min
+\left(
+1,
+\frac{\mathrm{count}(s)}{\tau}
+\right)^{1/2},
+\end{equation}
+
+其中 $\tau$ 是 support threshold。
+最终 loss 为：
+
+\begin{equation}
+\mathcal{L}_{\text{support}}
+=
+\mathbb{E}_{s \sim \mathcal{D}_{\text{OPD}}}
+\left[
+w(s)
+\cdot
+\mathrm{KL}
+\left(
+q_T(\cdot \mid s)
+\parallel
+\pi_\theta(\cdot \mid s)
+\right)
+\right]
++
+\lambda
+\mathrm{KL}
+\left(
+\pi_{\text{SFT}}(\cdot \mid s)
+\parallel
+\pi_\theta(\cdot \mid s)
+\right).
+\end{equation}
+
+直觉上，低覆盖状态上的 teacher label 可能不足以代表真实测试分布，因此训练时更保守；
+同时 KL anchor 防止策略过度偏离 SFT 初始化。
+
+\section{实验设置}
+
+一键运行命令如下：
+
+\begin{lstlisting}
+python run_all.py --profile quick
+\end{lstlisting}
+
+快速实验配置如下：
+
+\begin{table}[H]
+\centering
+\caption{Quick profile 实验设置}
+\begin{tabular}{lr}
+\toprule
+设置项 & 数值 \\
+\midrule
+expert episodes & 300 \\
+SFT rollout episodes & 300 \\
+SFT epochs & 12 \\
+Offline OPD epochs & 15 \\
+Online RL episodes & 600 \\
+Online OPD episodes & 300 \\
+evaluation episodes & 200 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+评估指标包括：
+
+\begin{itemize}
+    \item \code{success_rate}：最终诊断正确率；
+    \item \code{avg_reward}：平均 episode reward；
+    \item \code{avg_length}：平均轨迹长度；
+    \item \code{off_support_vs_expert}：相对于 expert states 的 off-support 比例；
+    \item \code{off_support_vs_offline_opd}：相对于 offline OPD 数据集的 off-support 比例。
+\end{itemize}
+
+除正常评估外，本文还加入了 agentic-shift 压力测试。
+在该测试中，每个 episode 开始后先注入一次错误 repair action，再让 policy 接管。
+这用于模拟多轮智能体中常见的早期错误状态偏移。
+
+\section{实验结果}
+
+\subsection{正常分布评估}
+
+\begin{table}[H]
+\centering
+\caption{In-distribution evaluation results}
+\begin{tabular}{lrrrrr}
+\toprule
+方法 & 成功率 & 平均奖励 & 平均长度 & Off-support/expert & Off-support/OPD \\
+\midrule
+\sft{} & 1.000 & 0.861 & 2.785 & 0.000 & 0.000 \\
+\onlinerl{} & 0.755 & 0.410 & 2.000 & 0.000 & 0.000 \\
+\offlineopd{} & 1.000 & 0.861 & 2.785 & 0.000 & 0.000 \\
+\supportopd{} & 1.000 & 0.861 & 2.785 & 0.000 & 0.000 \\
+\onlineopd{} & 1.000 & 0.861 & 2.785 & 0.000 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+正常分布下，专家路径覆盖了主要状态，\sft{}、\offlineopd{}、\supportopd{} 和 \onlineopd{} 都能达到 100\% 成功率。
+\onlinerl{} 因为奖励稀疏且训练 episode 较少，表现较弱。
+这一结果说明：当状态分布稳定、离线数据覆盖充分时，offline OPD 的离线化假设基本成立。
+
+\subsection{Agentic-shift 压力测试}
+
+\begin{table}[H]
+\centering
+\caption{Injected early wrong repair stress results}
+\begin{tabular}{lrrrrr}
+\toprule
+方法 & 成功率 & 平均奖励 & 平均长度 & Off-support/expert & Off-support/OPD \\
+\midrule
+\sft{} & 0.790 & 0.188 & 2.850 & 1.000 & 0.919 \\
+\onlinerl{} & 0.580 & -0.183 & 1.865 & 1.000 & 0.949 \\
+\offlineopd{} & 0.870 & 0.357 & 3.055 & 1.000 & 0.925 \\
+\supportopd{} & 0.870 & 0.357 & 3.055 & 1.000 & 0.925 \\
+\onlineopd{} & 0.730 & 0.177 & 3.350 & 1.000 & 0.931 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+压力测试中，所有方法的 \code{off_support_vs_expert} 都达到 1.000，说明注入的错误 repair action 确实将 policy 带入了专家轨迹没有覆盖的状态。
+相对于 offline OPD rollout，off-support ratio 也在 0.919 到 0.949 之间，说明学生遇到的大量状态并不在离线 OPD 数据支持内。
+
+这一结果直接说明：多轮 agentic 任务中，早期错误会显著破坏 offline coverage。
+即使 offline OPD 在正常分布下表现很好，在 shifted states 上也会受到固定离线数据的限制。
+
+\section{Case 分析}
+
+\subsection{成功 case}
+
+在正常分布中，\sft{} 的一个成功案例为：
+
+\begin{lstlisting}
+fault = service_crash
+actions = [
+  "check_service_log",
+  "submit_service_crash"
+]
+reward = 0.90
+\end{lstlisting}
+
+该案例中，日志工具直接返回了 service crash 线索，因此策略能够快速提交正确答案。
+
+\subsection{失败 case}
+
+\onlinerl{} 在正常分布中的一个失败案例为：
+
+\begin{lstlisting}
+fault = disk_full
+actions = [
+  "check_service_log",
+  "submit_network_dns_error"
+]
+reward = -1.10
+\end{lstlisting}
+
+该策略过早提交了错误根因，体现出 sparse reward 下 online RL 的不稳定性。
+
+\subsection{Shifted failure case}
+
+在 agentic-shift 压力测试中，\offlineopd{} 的一个失败案例为：
+
+\begin{lstlisting}
+fault = database_connection_error
+injected_action = clean_disk
+policy_actions = [
+  "check_service_log",
+  "check_network",
+  "check_permission",
+  "submit_network_dns_error"
+]
+reward = -1.45
+\end{lstlisting}
+
+错误的早期动作污染了后续观测，使策略进入离线数据低覆盖分支。
+随后策略检查了多个无关工具，并提交了错误根因。
+这正是 offline OPD 在 agentic shift 下可能失败的典型路径。
+
+\section{结论}
+
+本文实现了一个轻量级、可复现的多轮 agentic toy task，用于考察 \offlineopd{} 的假设边界。
+实验结论如下：
+
+\begin{itemize}
+    \item 当测试状态分布与 SFT rollout 分布接近时，\offlineopd{} 可以稳定工作；
+    \item 当早期错误动作改变后续状态时，off-support ratio 显著上升，离线 OPD 的固定数据覆盖成为瓶颈；
+    \item \onlinerl{} 能访问自身诱导状态，但在小样本和稀疏奖励下不稳定；
+    \item \onlineopd{} 理论上可以标注当前学生分布，但需要在线 teacher query；
+    \item support-aware loss 是一个低成本 patch，可以表达对低覆盖状态的保守性，但如果离线数据本身覆盖不足，它不能完全替代 DAgger-style refresh 或在线 teacher query。
+\end{itemize}
+
+因此，Lightning OPD 的离线化假设在单轮或短输出任务中更容易成立；
+而在多轮工具调用任务中，需要额外考虑 state coverage、错误分支累积和 teacher query refresh 策略。
+
+\section{复现命令与结果文件}
+
+安装依赖：
+
+\begin{lstlisting}
+pip install -r requirements.txt
+\end{lstlisting}
+
+快速复现实验：
+
+\begin{lstlisting}
+python run_all.py --profile quick
+\end{lstlisting}
+
+更大规模复现实验：
+
+\begin{lstlisting}
+python run_all.py --profile full
+\end{lstlisting}
+
+本文使用的汇总结果已经归档到：
+
+\begin{lstlisting}
+results/
+├── eval/
+│   └── summary.json
+├── eval_shift/
+│   └── summary.json
+└── tables/
+    └── summary_tables_cn.csv
+\end{lstlisting}
+
+完整训练数据、checkpoint 和逐 episode 详情保留在项目根目录的 \code{runs/} 下，可通过上述命令重新生成。
+
+\begin{thebibliography}{9}
+
+\bibitem{lightningopd}
+Lightning OPD.
+\newblock \url{https://arxiv.org/pdf/2604.13010}
+
+\bibitem{posttrainingkd}
+Revealing the Power of Post-Training for Small Language Models via Knowledge Distillation.
+\newblock \url{https://arxiv.org/pdf/2509.26497}
+
+\end{thebibliography}
+
+\end{document}

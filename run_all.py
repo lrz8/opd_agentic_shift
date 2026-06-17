@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
@@ -8,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 RUNS = ROOT / "runs"
+RESULTS = ROOT / "results"
+LATEX_RESULTS = ROOT / "latex_repo" / "results"
 
 PROFILES = {
     "quick": {
@@ -191,6 +194,57 @@ def write_report(metrics, shifted_metrics, eval_paths, shifted_eval_paths, profi
         f.write("\n".join(lines) + "\n")
 
 
+def write_result_bundle(base: Path, metrics, shifted_metrics) -> None:
+    (base / "eval").mkdir(parents=True, exist_ok=True)
+    (base / "eval_shift").mkdir(parents=True, exist_ok=True)
+    (base / "tables").mkdir(parents=True, exist_ok=True)
+
+    with open(base / "eval" / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
+    with open(base / "eval_shift" / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(shifted_metrics, f, indent=2, ensure_ascii=False)
+
+    readme = (
+        "# 实验结果归档说明\n\n"
+        "本目录只保留报告需要引用的精简结果。完整训练数据、checkpoint 和逐 episode 评估详情保留在项目根目录的 `runs/` 下。\n\n"
+        "## 文件说明\n\n"
+        "- `eval/summary.json`：正常分布评估的汇总指标。\n"
+        "- `eval_shift/summary.json`：注入一次早期错误 repair action 后的 agentic-shift 压力测试汇总指标。\n"
+        "- `tables/summary_tables_cn.csv`：正常评估与 shifted 评估的主结果表格汇总。\n"
+    )
+    with open(base / "README_cn.md", "w", encoding="utf-8") as f:
+        f.write(readme)
+
+    columns = [
+        "setting",
+        "method",
+        "success_rate",
+        "avg_reward",
+        "avg_length",
+        "off_support_vs_expert",
+        "off_support_vs_offline_opd",
+    ]
+    with open(base / "tables" / "summary_tables_cn.csv", "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for setting, table in [("in_distribution", metrics), ("agentic_shift", shifted_metrics)]:
+            for method, row in table.items():
+                writer.writerow({
+                    "setting": setting,
+                    "method": method,
+                    "success_rate": f"{row['success_rate']:.3f}",
+                    "avg_reward": f"{row['avg_reward']:.3f}",
+                    "avg_length": f"{row['avg_length']:.3f}",
+                    "off_support_vs_expert": f"{row['off_support_vs_expert']:.3f}",
+                    "off_support_vs_offline_opd": f"{row['off_support_vs_offline_opd']:.3f}",
+                })
+
+
+def write_submission_results(metrics, shifted_metrics) -> None:
+    write_result_bundle(RESULTS, metrics, shifted_metrics)
+    write_result_bundle(LATEX_RESULTS, metrics, shifted_metrics)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", choices=sorted(PROFILES), default="quick")
@@ -254,11 +308,13 @@ def main():
     (RUNS / "eval_shift").mkdir(parents=True, exist_ok=True)
     with open(RUNS / "eval_shift" / "summary.json", "w", encoding="utf-8") as f:
         json.dump(shifted_metrics, f, indent=2, ensure_ascii=False)
+    write_submission_results(metrics, shifted_metrics)
     write_report(metrics, shifted_metrics, eval_paths, shifted_eval_paths, args.profile, cfg)
     print("\nSUMMARY")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
     print("\nSHIFTED SUMMARY")
     print(json.dumps(shifted_metrics, indent=2, ensure_ascii=False))
+    print("\nWROTE results/")
     print("\nWROTE REPORT.md")
 
 

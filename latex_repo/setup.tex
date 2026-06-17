@@ -1,0 +1,157 @@
+% ============================================================
+% setup.tex
+% Packages, formatting, commands, and reusable LaTeX structures
+% ============================================================
+
+% -------------------------
+% Engine-safe font setup
+% -------------------------
+\usepackage{iftex}
+\ifPDFTeX
+    \usepackage[T1]{fontenc}
+    \usepackage[utf8]{inputenc}
+\else
+    % XeLaTeX/LuaLaTeX use UTF-8 natively.
+    % We intentionally avoid explicit font selection for maximum Overleaf compatibility.
+\fi
+
+% -------------------------
+% Page Layout
+% -------------------------
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\setstretch{1.08}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+\emergencystretch=3em
+\sloppy
+
+% -------------------------
+% Math
+% -------------------------
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+% -------------------------
+% Figures and Tables
+% -------------------------
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{placeins}
+
+% -------------------------
+% Lists
+% -------------------------
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=1.5em}
+\setlist[enumerate]{leftmargin=1.5em}
+
+% -------------------------
+% Algorithms
+% -------------------------
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% -------------------------
+% Colors and Hyperlinks
+% -------------------------
+\usepackage{xcolor}
+\usepackage[
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+]{hyperref}
+
+% -------------------------
+% Code Blocks
+% -------------------------
+\usepackage{listings}
+
+\definecolor{codegray}{RGB}{245,245,245}
+\definecolor{commentgray}{RGB}{110,110,110}
+\definecolor{keywordblue}{RGB}{0,70,160}
+\definecolor{stringteal}{RGB}{0,120,120}
+
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{codegray},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{commentgray},
+    keywordstyle=\color{keywordblue},
+    commentstyle=\color{commentgray},
+    stringstyle=\color{stringteal},
+    showstringspaces=false,
+    tabsize=4,
+    columns=fullflexible,
+    keepspaces=true,
+    literate={├}{{|}}1 {└}{{|}}1 {─}{{-}}1 {│}{{|}}1
+}
+
+\lstset{style=codestyle}
+
+% -------------------------
+% Convenient Commands
+% -------------------------
+\newcommand{\methodname}{Offline OPD}
+\newcommand{\taskname}{Multi-turn Troubleshooting Agent}
+\newcommand{\supportopd}{Support-aware Offline OPD}
+
+% Avoid bold-small-caps font warnings by keeping method names plain.
+\newcommand{\sft}{SFT}
+\newcommand{\onlinerl}{Online RL}
+\newcommand{\offlineopd}{Offline OPD}
+\newcommand{\onlineopd}{Online OPD}
+
+% Safe code command: raw underscores are allowed inside \code{...}.
+% Example: \code{offline_opd.py} compiles correctly.
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+
+% -------------------------
+% Placeholder Figure Command
+% This avoids compilation failure when a figure file is missing.
+% The \detokenize call prevents underscores in filenames from breaking LaTeX.
+% -------------------------
+\newcommand{\placeholderfigure}[3]{%
+\begin{figure}[H]
+\centering
+\IfFileExists{#1}{%
+    \includegraphics[width=#2\linewidth]{#1}%
+}{%
+    \fbox{%
+        \begin{minipage}[c][0.25\textheight][c]{#2\linewidth}
+        \centering
+        Placeholder for figure: \texttt{\detokenize{#1}}
+        \end{minipage}%
+    }%
+}%
+\caption{#3}
+\end{figure}%
+}
+
+% -------------------------
+% Table Column Helpers
+% -------------------------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+% -------------------------
+% Document Metadata Helper
+% -------------------------
+\newcommand{\reporttitle}{%
+    \textbf{Offline OPD under Agentic Shift} \\
+    \large A Lightweight Multi-turn Agentic Toy Task Study%
+}
+
+\newcommand{\reportauthor}{%
+    Runze Lv \\
+    \texttt{runzelvlc@gmail.com}%
+}
